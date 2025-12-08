@@ -91,6 +91,7 @@ import {
   migrateFromLegacyAuth,
 } from "./lib/types/customHeaders";
 import MetadataTab from "./components/MetadataTab";
+import { useHttpTransactions } from "./lib/hooks/useHttpTransactions";
 
 const CONFIG_LOCAL_STORAGE_KEY = "inspectorConfig_v1";
 
@@ -358,6 +359,9 @@ const App = () => {
     defaultLoggingLevel: logLevel,
     metadata,
   });
+
+  // Hook for capturing actual HTTP traffic from the proxy
+  const httpTransactions = useHttpTransactions(config);
 
   useEffect(() => {
     if (serverCapabilities) {
@@ -1280,8 +1284,10 @@ const App = () => {
             <HistoryAndNotifications
               requestHistory={requestHistory}
               serverNotifications={notifications}
+              httpTransactions={httpTransactions.transactions}
               onClearHistory={clearRequestHistory}
               onClearNotifications={handleClearNotifications}
+              onClearTransactions={httpTransactions.clearTransactions}
             />
           </div>
         </div>

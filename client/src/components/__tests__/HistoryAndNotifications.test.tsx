@@ -3,6 +3,7 @@ import { useState } from "react";
 import { describe, it, expect, jest } from "@jest/globals";
 import HistoryAndNotifications from "../HistoryAndNotifications";
 import { ServerNotification } from "@modelcontextprotocol/sdk/types.js";
+import { HistoryEntry } from "@/lib/types/historyEntry";
 
 // Mock JsonView component
 jest.mock("../JsonView", () => {
@@ -12,12 +13,16 @@ jest.mock("../JsonView", () => {
 });
 
 describe("HistoryAndNotifications", () => {
-  const mockRequestHistory = [
+  const mockRequestHistory: HistoryEntry[] = [
     {
+      id: "1",
+      timestamp: Date.now() - 2000,
       request: JSON.stringify({ method: "test/method1", params: {} }),
       response: JSON.stringify({ result: "success" }),
     },
     {
+      id: "2",
+      timestamp: Date.now() - 1000,
       request: JSON.stringify({ method: "test/method2", params: {} }),
       response: JSON.stringify({ result: "success" }),
     },
@@ -189,8 +194,10 @@ describe("HistoryAndNotifications", () => {
     expect(screen.getByText("Response:")).toBeTruthy();
 
     // Add a new request at the beginning
-    const newRequestHistory = [
+    const newRequestHistory: HistoryEntry[] = [
       {
+        id: "3",
+        timestamp: Date.now(),
         request: JSON.stringify({ method: "test/new_method", params: {} }),
         response: JSON.stringify({ result: "new success" }),
       },
@@ -227,7 +234,8 @@ describe("HistoryAndNotifications", () => {
 
   it("clears request history when Clear is clicked", () => {
     const Wrapper = () => {
-      const [history, setHistory] = useState(mockRequestHistory);
+      const [history, setHistory] =
+        useState<HistoryEntry[]>(mockRequestHistory);
       return (
         <HistoryAndNotifications
           requestHistory={history}

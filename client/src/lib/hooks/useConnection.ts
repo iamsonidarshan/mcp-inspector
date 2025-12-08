@@ -64,6 +64,7 @@ import { InspectorConfig } from "../configurationTypes";
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { CustomHeaders } from "../types/customHeaders";
 import { resolveRefsInMessage } from "@/utils/schemaUtils";
+import { HistoryEntry, HttpHeaders } from "../types/historyEntry";
 
 interface UseConnectionOptions {
   transportType: "stdio" | "sse" | "streamable-http";
@@ -119,9 +120,9 @@ export function useConnection({
   const [clientTransport, setClientTransport] = useState<Transport | null>(
     null,
   );
-  const [requestHistory, setRequestHistory] = useState<
-    { request: string; response?: string }[]
-  >([]);
+  const [requestHistory, setRequestHistory] = useState<HistoryEntry[]>([]);
+  const [currentRequestHeaders, setCurrentRequestHeaders] =
+    useState<HttpHeaders>({});
   const [completionsSupported, setCompletionsSupported] = useState(false);
   const [mcpSessionId, setMcpSessionId] = useState<string | null>(null);
   const [mcpProtocolVersion, setMcpProtocolVersion] = useState<string | null>(
@@ -163,12 +164,28 @@ export function useConnection({
     saveScopeToSessionStorage(sseUrl, oauthScope);
   }, [oauthScope, sseUrl]);
 
-  const pushHistory = (request: object, response?: object) => {
+  const pushHistory = (
+    request: object,
+    response?: object,
+    headers?: {
+      requestHeaders?: HttpHeaders;
+      responseHeaders?: HttpHeaders;
+      activeProfileId?: string | null;
+      activeProfileName?: string | null;
+    },
+  ) => {
     setRequestHistory((prev) => [
       ...prev,
       {
+        id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        timestamp: Date.now(),
         request: JSON.stringify(request),
         response: response !== undefined ? JSON.stringify(response) : undefined,
+        requestHeaders: headers?.requestHeaders || currentRequestHeaders,
+        responseHeaders: headers?.responseHeaders,
+        transportType,
+        activeProfileId: headers?.activeProfileId,
+        activeProfileName: headers?.activeProfileName,
       },
     ]);
   };
@@ -508,6 +525,11 @@ export function useConnection({
       if (customHeaderNames.length > 0) {
         headers["x-custom-auth-headers"] = JSON.stringify(customHeaderNames);
       }
+
+      // Store current headers for history tracking (excluding internal proxy headers)
+      const headersForHistory = { ...headers };
+      delete headersForHistory["x-custom-auth-headers"];
+      setCurrentRequestHeaders(headersForHistory);
 
       // Create appropriate transport
       let transportOptions:

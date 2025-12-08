@@ -25,6 +25,7 @@ import express from "express";
 import { findActualExecutable } from "spawn-rx";
 import mcpProxy from "./mcpProxy.js";
 import { randomUUID, randomBytes, timingSafeEqual } from "node:crypto";
+import { profileManager } from "./auth/userProfiles.js";
 
 const DEFAULT_MCP_PROXY_LISTEN_PORT = "6277";
 
@@ -47,6 +48,10 @@ const { values } = parseArgs({
 // Function to get HTTP headers.
 const getHttpHeaders = (req: express.Request): Record<string, string> => {
   const headers: Record<string, string> = {};
+
+  // Inject active profile headers first (can be overridden by request headers)
+  const activeProfileHeaders = profileManager.getActiveHeaders();
+  Object.assign(headers, activeProfileHeaders);
 
   // Iterate over all headers in the request
   for (const key in req.headers) {
@@ -154,6 +159,50 @@ app.use((req, res, next) => {
 const webAppTransports: Map<string, Transport> = new Map<string, Transport>(); // Web app transports by web app sessionId
 const serverTransports: Map<string, Transport> = new Map<string, Transport>(); // Server Transports by web app sessionId
 const sessionHeaderHolders: Map<string, { headers: HeadersInit }> = new Map(); // For dynamic header updates
+
+// =============================================================================
+// HEADER CAPTURE - For detailed request/response logging
+// =============================================================================
+
+/**
+ * Captured HTTP transaction (request + response headers)
+ */
+interface CapturedHttpTransaction {
+  id: string;
+  timestamp: number;
+  sessionId?: string;
+  url: string;
+  method: string;
+  requestHeaders: Record<string, string>;
+  responseHeaders: Record<string, string>;
+  statusCode: number;
+  statusText: string;
+  duration: number;
+}
+
+// Store for captured transactions
+const capturedTransactions: CapturedHttpTransaction[] = [];
+const MAX_CAPTURED_TRANSACTIONS = 100;
+
+// SSE clients listening for header events
+const headerEventClients: Set<express.Response> = new Set();
+
+/**
+ * Record a captured HTTP transaction and broadcast to clients
+ */
+const recordTransaction = (transaction: CapturedHttpTransaction) => {
+  capturedTransactions.push(transaction);
+  // Keep only the last N transactions
+  if (capturedTransactions.length > MAX_CAPTURED_TRANSACTIONS) {
+    capturedTransactions.shift();
+  }
+
+  // Broadcast to all SSE clients
+  const eventData = JSON.stringify(transaction);
+  headerEventClients.forEach((client) => {
+    client.write(`data: ${eventData}\n\n`);
+  });
+};
 
 // Use provided token from environment or generate a new one
 const sessionToken =
@@ -275,11 +324,17 @@ const createWebReadableStream = (nodeStream: any): ReadableStream => {
  * `Content-Type` are preserved. For SSE requests, it also converts Node.js
  * streams to web-compatible streams.
  */
-const createCustomFetch = (headerHolder: { headers: HeadersInit }) => {
+const createCustomFetch = (
+  headerHolder: { headers: HeadersInit },
+  sessionId?: string,
+) => {
   return async (
     input: RequestInfo | URL,
     init?: RequestInit,
   ): Promise<Response> => {
+    const startTime = Date.now();
+    const transactionId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
     // Determine the headers from the original request/init.
     // The SDK may pass a Request object or a URL and an init object.
     const originalHeaders =
@@ -300,11 +355,45 @@ const createCustomFetch = (headerHolder: { headers: HeadersInit }) => {
       headersObject[key] = value;
     });
 
+    // Capture the request URL
+    const requestUrl =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input instanceof Request
+            ? input.url
+            : String(input);
+    const requestMethod =
+      init?.method || (input instanceof Request ? input.method : "GET");
+
     // Get the response from node-fetch (cast input and init to handle type differences)
     const response = await fetch(
       input as any,
       { ...init, headers: headersObject } as any,
     );
+
+    const duration = Date.now() - startTime;
+
+    // Capture response headers
+    const responseHeaders: Record<string, string> = {};
+    response.headers.forEach((value: string, key: string) => {
+      responseHeaders[key] = value;
+    });
+
+    // Record the transaction for debugging
+    recordTransaction({
+      id: transactionId,
+      timestamp: startTime,
+      sessionId,
+      url: requestUrl,
+      method: requestMethod,
+      requestHeaders: headersObject,
+      responseHeaders,
+      statusCode: response.status,
+      statusText: response.statusText,
+      duration,
+    });
 
     // Check if this is an SSE request by looking at the Accept header
     const acceptHeader = finalHeaders.get("Accept");
@@ -316,12 +405,6 @@ const createCustomFetch = (headerHolder: { headers: HeadersInit }) => {
       const webStream = createWebReadableStream(response.body);
 
       // Create a new response with the web-compatible stream
-      // Convert node-fetch headers to plain object for web Response compatibility
-      const responseHeaders: Record<string, string> = {};
-      response.headers.forEach((value: string, key: string) => {
-        responseHeaders[key] = value;
-      });
-
       return new Response(webStream, {
         status: response.status,
         statusText: response.statusText,
@@ -767,6 +850,193 @@ app.get("/config", originValidationMiddleware, authMiddleware, (req, res) => {
     res.status(500).json(error);
   }
 });
+
+// =============================================================================
+// AUTH PROFILES API - For multi-user security testing (IDOR/BAC)
+// =============================================================================
+
+// GET /auth/profiles - List all profiles
+app.get(
+  "/auth/profiles",
+  originValidationMiddleware,
+  authMiddleware,
+  (req, res) => {
+    try {
+      res.json({
+        profiles: profileManager.listProfiles(),
+        activeProfileId: profileManager.getActiveProfileId(),
+      });
+    } catch (error) {
+      console.error("Error listing profiles:", error);
+      res.status(500).json({ error: (error as Error).message });
+    }
+  },
+);
+
+// POST /auth/profiles - Create new profile
+app.post(
+  "/auth/profiles",
+  express.json(),
+  originValidationMiddleware,
+  authMiddleware,
+  (req, res) => {
+    try {
+      const profile = profileManager.addProfile(req.body);
+      res.status(201).json(profile);
+    } catch (error) {
+      console.error("Error creating profile:", error);
+      res.status(400).json({ error: (error as Error).message });
+    }
+  },
+);
+
+// PATCH /auth/profiles/:id - Update profile
+app.patch(
+  "/auth/profiles/:id",
+  express.json(),
+  originValidationMiddleware,
+  authMiddleware,
+  (req, res) => {
+    try {
+      const profile = profileManager.updateProfile(req.params.id, req.body);
+      res.json(profile);
+    } catch (error) {
+      console.error("Error updating profile:", error);
+      res.status(404).json({ error: (error as Error).message });
+    }
+  },
+);
+
+// DELETE /auth/profiles/:id - Delete profile
+app.delete(
+  "/auth/profiles/:id",
+  originValidationMiddleware,
+  authMiddleware,
+  (req, res) => {
+    try {
+      if (profileManager.deleteProfile(req.params.id)) {
+        res.status(204).end();
+      } else {
+        res.status(404).json({ error: "Profile not found" });
+      }
+    } catch (error) {
+      console.error("Error deleting profile:", error);
+      res.status(500).json({ error: (error as Error).message });
+    }
+  },
+);
+
+// POST /auth/profiles/select/:id - Set active profile
+app.post(
+  "/auth/profiles/select/:id",
+  originValidationMiddleware,
+  authMiddleware,
+  (req, res) => {
+    try {
+      profileManager.setActiveProfile(req.params.id);
+      res.json({
+        activeProfileId: req.params.id,
+        activeProfile: profileManager.getActiveProfile(),
+      });
+    } catch (error) {
+      console.error("Error selecting profile:", error);
+      res.status(404).json({ error: (error as Error).message });
+    }
+  },
+);
+
+// POST /auth/profiles/deselect - Clear active profile
+app.post(
+  "/auth/profiles/deselect",
+  originValidationMiddleware,
+  authMiddleware,
+  (req, res) => {
+    try {
+      profileManager.clearActiveProfile();
+      res.json({ activeProfileId: null });
+    } catch (error) {
+      console.error("Error deselecting profile:", error);
+      res.status(500).json({ error: (error as Error).message });
+    }
+  },
+);
+
+// =============================================================================
+// HTTP TRANSACTION CAPTURE API - For detailed request/response logging
+// =============================================================================
+
+/**
+ * GET /transactions - Get all captured HTTP transactions
+ */
+app.get(
+  "/transactions",
+  originValidationMiddleware,
+  authMiddleware,
+  (req, res) => {
+    try {
+      res.json({
+        transactions: capturedTransactions,
+        count: capturedTransactions.length,
+      });
+    } catch (error) {
+      console.error("Error fetching transactions:", error);
+      res.status(500).json({ error: (error as Error).message });
+    }
+  },
+);
+
+/**
+ * DELETE /transactions - Clear all captured transactions
+ */
+app.delete(
+  "/transactions",
+  originValidationMiddleware,
+  authMiddleware,
+  (req, res) => {
+    try {
+      capturedTransactions.length = 0;
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error clearing transactions:", error);
+      res.status(500).json({ error: (error as Error).message });
+    }
+  },
+);
+
+/**
+ * GET /transactions/stream - SSE endpoint for real-time transaction events
+ */
+app.get(
+  "/transactions/stream",
+  originValidationMiddleware,
+  authMiddleware,
+  (req, res) => {
+    // Set SSE headers
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    // Add this client to the broadcast list
+    headerEventClients.add(res);
+    console.log(
+      `📡 Transaction stream client connected (${headerEventClients.size} total)`,
+    );
+
+    // Send initial data
+    res.write(
+      `data: ${JSON.stringify({ type: "connected", count: capturedTransactions.length })}\\n\\n`,
+    );
+
+    // Handle client disconnect
+    req.on("close", () => {
+      headerEventClients.delete(res);
+      console.log(
+        `📡 Transaction stream client disconnected (${headerEventClients.size} remaining)`,
+      );
+    });
+  },
+);
 
 const PORT = parseInt(
   process.env.SERVER_PORT || DEFAULT_MCP_PROXY_LISTEN_PORT,
