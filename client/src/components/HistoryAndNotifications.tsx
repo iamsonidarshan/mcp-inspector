@@ -11,9 +11,12 @@ import {
   ArrowRight,
   ExternalLink,
   Wifi,
+  Database,
+  RefreshCw,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { CapturedTransaction } from "@/lib/hooks/useHttpTransactions";
+import { IndexedResource } from "@/lib/hooks/useResourceIndex";
 
 /**
  * Component to render HTTP headers in a collapsible format
@@ -98,16 +101,22 @@ const HistoryAndNotifications = ({
   requestHistory,
   serverNotifications,
   httpTransactions,
+  indexedResources,
   onClearHistory,
   onClearNotifications,
   onClearTransactions,
+  onClearResources,
+  onRefreshResources,
 }: {
   requestHistory: HistoryEntry[];
   serverNotifications: ServerNotification[];
   httpTransactions?: CapturedTransaction[];
+  indexedResources?: IndexedResource[];
   onClearHistory?: () => void;
   onClearNotifications?: () => void;
   onClearTransactions?: () => void;
+  onClearResources?: () => Promise<void>;
+  onRefreshResources?: () => Promise<void>;
 }) => {
   const [expandedRequests, setExpandedRequests] = useState<{
     [key: number]: boolean;
@@ -506,6 +515,110 @@ const HistoryAndNotifications = ({
                   )}
                 </li>
               ))}
+          </ul>
+        )}
+      </div>
+
+      {/* Resource Graph - IDOR Testing */}
+      <div className="w-80 overflow-y-auto p-4 border-l">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Database className="h-4 w-4 text-purple-500" />
+            <h2 className="text-lg font-semibold">Resource Graph</h2>
+            {indexedResources && indexedResources.length > 0 && (
+              <Badge variant="outline" className="text-xs">
+                {indexedResources.length}
+              </Badge>
+            )}
+          </div>
+          <div className="flex gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onRefreshResources}
+              title="Refresh"
+            >
+              <RefreshCw className="h-3 w-3" />
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onClearResources}
+              disabled={!indexedResources || indexedResources.length === 0}
+            >
+              Clear
+            </Button>
+          </div>
+        </div>
+        {!indexedResources || indexedResources.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground">
+            <Database className="h-8 w-8 mx-auto mb-2 opacity-50" />
+            <p className="text-sm italic">No resources indexed yet</p>
+            <p className="text-xs mt-1">Execute MCP tools to discover IDs</p>
+          </div>
+        ) : (
+          <ul className="space-y-2">
+            {indexedResources
+              .slice()
+              .reverse()
+              .slice(0, 50)
+              .map((resource) => {
+                const userColorClass =
+                  {
+                    blue: "border-l-blue-500",
+                    red: "border-l-red-500",
+                    green: "border-l-green-500",
+                    purple: "border-l-purple-500",
+                    orange: "border-l-orange-500",
+                    yellow: "border-l-yellow-500",
+                  }[resource.userColorTag] || "border-l-blue-500";
+
+                const typeBadgeClass =
+                  {
+                    uuid: "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
+                    numeric:
+                      "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
+                    path: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
+                    slug: "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200",
+                    unknown:
+                      "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200",
+                  }[resource.type] || "bg-gray-100 text-gray-800";
+
+                return (
+                  <li
+                    key={resource.entryId}
+                    className={`text-sm bg-secondary py-2 px-3 rounded border-l-4 ${userColorClass}`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0 space-y-1">
+                        <div className="flex items-center gap-2">
+                          <code
+                            className="font-mono text-xs font-medium truncate"
+                            title={resource.id}
+                          >
+                            {resource.id.length > 25
+                              ? resource.id.slice(0, 25) + "..."
+                              : resource.id}
+                          </code>
+                          <Badge
+                            className={`${typeBadgeClass} text-xs`}
+                            variant="secondary"
+                          >
+                            {resource.type}
+                          </Badge>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                          <span title={resource.discoveredFromUserName}>
+                            {resource.discoveredFromUserName}
+                          </span>
+                          <span>•</span>
+                          <span>{resource.discoveredByTool}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
           </ul>
         )}
       </div>

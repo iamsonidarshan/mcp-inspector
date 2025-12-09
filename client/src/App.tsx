@@ -92,6 +92,7 @@ import {
 } from "./lib/types/customHeaders";
 import MetadataTab from "./components/MetadataTab";
 import { useHttpTransactions } from "./lib/hooks/useHttpTransactions";
+import { useResourceIndex } from "./lib/hooks/useResourceIndex";
 
 const CONFIG_LOCAL_STORAGE_KEY = "inspectorConfig_v1";
 
@@ -362,6 +363,9 @@ const App = () => {
 
   // Hook for capturing actual HTTP traffic from the proxy
   const httpTransactions = useHttpTransactions(config);
+
+  // Hook for indexed resources (IDOR testing)
+  const resourceIndex = useResourceIndex(config);
 
   useEffect(() => {
     if (serverCapabilities) {
@@ -1285,9 +1289,12 @@ const App = () => {
               requestHistory={requestHistory}
               serverNotifications={notifications}
               httpTransactions={httpTransactions.transactions}
+              indexedResources={resourceIndex.resources}
               onClearHistory={clearRequestHistory}
               onClearNotifications={handleClearNotifications}
               onClearTransactions={httpTransactions.clearTransactions}
+              onClearResources={resourceIndex.clearResources}
+              onRefreshResources={resourceIndex.refresh}
             />
           </div>
         </div>

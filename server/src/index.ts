@@ -26,6 +26,7 @@ import { findActualExecutable } from "spawn-rx";
 import mcpProxy from "./mcpProxy.js";
 import { randomUUID, randomBytes, timingSafeEqual } from "node:crypto";
 import { profileManager } from "./auth/userProfiles.js";
+import { resourceIndexer } from "./analysis/resourceIndexer.js";
 
 const DEFAULT_MCP_PROXY_LISTEN_PORT = "6277";
 
@@ -1043,6 +1044,71 @@ app.get(
         `📡 Transaction stream client disconnected (${headerEventClients.size} remaining)`,
       );
     });
+  },
+);
+
+// =============================================================================
+// RESOURCE INDEXING API - For IDOR testing
+// =============================================================================
+
+/**
+ * GET /analysis/resources - Get all indexed resources
+ */
+app.get(
+  "/analysis/resources",
+  originValidationMiddleware,
+  authMiddleware,
+  (req, res) => {
+    try {
+      const resources = resourceIndexer.getIndexedResources();
+      res.json({
+        resources,
+        count: resources.length,
+      });
+    } catch (error) {
+      console.error("Error fetching resources:", error);
+      res.status(500).json({ error: (error as Error).message });
+    }
+  },
+);
+
+/**
+ * GET /analysis/resources/:userId - Get resources discovered by a specific user
+ */
+app.get(
+  "/analysis/resources/:userId",
+  originValidationMiddleware,
+  authMiddleware,
+  (req, res) => {
+    try {
+      const resources = resourceIndexer.getResourcesByUser(req.params.userId);
+      res.json({
+        resources,
+        count: resources.length,
+        userId: req.params.userId,
+      });
+    } catch (error) {
+      console.error("Error fetching user resources:", error);
+      res.status(500).json({ error: (error as Error).message });
+    }
+  },
+);
+
+/**
+ * DELETE /analysis/resources - Clear all indexed resources
+ */
+app.delete(
+  "/analysis/resources",
+  originValidationMiddleware,
+  authMiddleware,
+  (req, res) => {
+    try {
+      resourceIndexer.clearIndex();
+      res.status(204).send();
+    } catch (error) {
+      console.error("Error clearing resources:", error);
+      res.status(500).json({ error: (error as Error).message });
+    }
   },
 );
 
