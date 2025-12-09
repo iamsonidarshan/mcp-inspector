@@ -253,17 +253,25 @@ const authMiddleware = (
     });
   };
 
+  // Check for token in header first
   const authHeader = req.headers["x-mcp-proxy-auth"];
   const authHeaderValue = Array.isArray(authHeader)
     ? authHeader[0]
     : authHeader;
 
-  if (!authHeaderValue || !authHeaderValue.startsWith("Bearer ")) {
+  let providedToken: string | undefined;
+
+  if (authHeaderValue && authHeaderValue.startsWith("Bearer ")) {
+    providedToken = authHeaderValue.substring(7); // Remove 'Bearer ' prefix
+  } else if (req.query.token && typeof req.query.token === "string") {
+    // Fall back to query param token for EventSource (SSE) which can't set headers
+    providedToken = req.query.token;
+  }
+
+  if (!providedToken) {
     sendUnauthorized();
     return;
   }
-
-  const providedToken = authHeaderValue.substring(7); // Remove 'Bearer ' prefix
   const expectedToken = sessionToken;
 
   // Convert to buffers for timing-safe comparison
@@ -1025,7 +1033,7 @@ app.get(
 
     // Send initial data
     res.write(
-      `data: ${JSON.stringify({ type: "connected", count: capturedTransactions.length })}\\n\\n`,
+      `data: ${JSON.stringify({ type: "connected", count: capturedTransactions.length })}\n\n`,
     );
 
     // Handle client disconnect
