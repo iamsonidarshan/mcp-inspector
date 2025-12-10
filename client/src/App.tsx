@@ -50,6 +50,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import {
   Bell,
+  Bot,
   Files,
   FolderTree,
   Hammer,
@@ -93,6 +94,7 @@ import {
 import MetadataTab from "./components/MetadataTab";
 import { useHttpTransactions } from "./lib/hooks/useHttpTransactions";
 import { useResourceIndex } from "./lib/hooks/useResourceIndex";
+import AgentDashboard from "./pages/AgentDashboard";
 
 const CONFIG_LOCAL_STORAGE_KEY = "inspectorConfig_v1";
 
@@ -304,6 +306,7 @@ const App = () => {
     serverCapabilities,
     serverImplementation,
     mcpClient,
+    mcpSessionId,
     requestHistory,
     clearRequestHistory,
     makeRequest,
@@ -1076,6 +1079,10 @@ const App = () => {
                   <Settings className="w-4 h-4 mr-2" />
                   Metadata
                 </TabsTrigger>
+                <TabsTrigger value="agent">
+                  <Bot className="w-4 h-4 mr-2" />
+                  Agent
+                </TabsTrigger>
               </TabsList>
 
               <div className="w-full">
@@ -1240,6 +1247,16 @@ const App = () => {
                       metadata={metadata}
                       onMetadataChange={handleMetadataChange}
                     />
+                    <TabsContent
+                      value="agent"
+                      className="h-[calc(100vh-200px)]"
+                    >
+                      <AgentDashboard
+                        config={config}
+                        bearerToken={getMCPProxyAuthToken(config).token}
+                        sessionId={mcpSessionId}
+                      />
+                    </TabsContent>
                   </>
                 )}
               </div>

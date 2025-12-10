@@ -751,6 +751,14 @@ export function useConnection({
 
         setClientTransport(transport);
 
+        // Capture session ID from StreamableHTTPClientTransport
+        if (transportType === "streamable-http") {
+          const httpTransport = transport as StreamableHTTPClientTransport;
+          if (httpTransport.sessionId) {
+            setMcpSessionId(httpTransport.sessionId);
+          }
+        }
+
         capabilities = client.getServerCapabilities();
         const serverInfo = client.getServerVersion();
         setServerImplementation(serverInfo || null);
@@ -879,6 +887,7 @@ export function useConnection({
     serverCapabilities,
     serverImplementation,
     mcpClient,
+    mcpSessionId,
     requestHistory,
     clearRequestHistory,
     makeRequest,

@@ -1112,6 +1112,323 @@ app.delete(
   },
 );
 
+// =============================================================================
+// AUTONOMOUS AGENT API - LLM-powered tool chaining
+// =============================================================================
+
+import { agentOrchestrator, AgentEvent, ToolInfo } from "./agent/index.js";
+
+// SSE clients listening for agent events
+const agentEventClients: Set<express.Response> = new Set();
+
+// Forward agent events to SSE clients
+agentOrchestrator.on("event", (event: AgentEvent) => {
+  const eventData = JSON.stringify(event);
+  agentEventClients.forEach((client) => {
+    client.write(`data: ${eventData}\n\n`);
+  });
+});
+
+/**
+ * POST /agent/configure - Configure the agent with API key
+ */
+app.post(
+  "/agent/configure",
+  express.json(),
+  originValidationMiddleware,
+  authMiddleware,
+  async (req, res) => {
+    try {
+      const { apiKey, provider, maxDepth } = req.body as {
+        apiKey: string;
+        provider?: "claude" | "gemini";
+        maxDepth?: number;
+      };
+
+      if (!apiKey) {
+        res.status(400).json({ error: "apiKey is required" });
+        return;
+      }
+
+      // Get session ID from request (for MCP tool calls)
+      const sessionId = req.body.sessionId as string;
+
+      // Create tool call function that uses the MCP proxy
+      const toolCallFn = async (
+        name: string,
+        params: Record<string, unknown>,
+      ) => {
+        const transport = serverTransports.get(sessionId);
+        if (!transport) {
+          throw new Error(
+            "No MCP session found. Connect to an MCP server first.",
+          );
+        }
+
+        // Send tools/call request through the transport
+        const request = {
+          jsonrpc: "2.0" as const,
+          id: `agent-${Date.now()}`,
+          method: "tools/call",
+          params: { name, arguments: params },
+        };
+
+        return new Promise((resolve, reject) => {
+          const timeout = setTimeout(
+            () => reject(new Error("Tool call timeout")),
+            30000,
+          );
+
+          const originalOnMessage = transport.onmessage;
+          transport.onmessage = (message: unknown) => {
+            if (
+              message &&
+              typeof message === "object" &&
+              "id" in message &&
+              (message as { id: string }).id === request.id
+            ) {
+              clearTimeout(timeout);
+              transport.onmessage = originalOnMessage;
+              if ("result" in message) {
+                resolve((message as { result: unknown }).result);
+              } else if ("error" in message) {
+                reject(
+                  new Error(
+                    JSON.stringify((message as { error: unknown }).error),
+                  ),
+                );
+              }
+            } else if (originalOnMessage) {
+              originalOnMessage(message as any);
+            }
+          };
+
+          transport.send(request).catch(reject);
+        });
+      };
+
+      // Create list tools function
+      const listToolsFn = async (): Promise<ToolInfo[]> => {
+        const transport = serverTransports.get(sessionId);
+        if (!transport) {
+          throw new Error(
+            "No MCP session found. Connect to an MCP server first.",
+          );
+        }
+
+        const request = {
+          jsonrpc: "2.0" as const,
+          id: `agent-list-${Date.now()}`,
+          method: "tools/list",
+          params: {},
+        };
+
+        return new Promise((resolve, reject) => {
+          const timeout = setTimeout(
+            () => reject(new Error("List tools timeout")),
+            30000,
+          );
+
+          const originalOnMessage = transport.onmessage;
+          transport.onmessage = (message: unknown) => {
+            if (
+              message &&
+              typeof message === "object" &&
+              "id" in message &&
+              (message as { id: string }).id === request.id
+            ) {
+              clearTimeout(timeout);
+              transport.onmessage = originalOnMessage;
+              if ("result" in message) {
+                const result = (message as { result: { tools?: ToolInfo[] } })
+                  .result;
+                resolve(result.tools || []);
+              } else if ("error" in message) {
+                reject(
+                  new Error(
+                    JSON.stringify((message as { error: unknown }).error),
+                  ),
+                );
+              }
+            } else if (originalOnMessage) {
+              originalOnMessage(message as any);
+            }
+          };
+
+          transport.send(request).catch(reject);
+        });
+      };
+
+      agentOrchestrator.configure({
+        apiKey,
+        provider: provider || "gemini",
+        toolCallFn,
+        listToolsFn,
+        maxDepth: maxDepth || 10,
+      });
+
+      res.json({
+        status: "configured",
+        provider: provider || "gemini",
+        maxDepth: maxDepth || 10,
+      });
+    } catch (error) {
+      console.error("Error configuring agent:", error);
+      res.status(500).json({ error: (error as Error).message });
+    }
+  },
+);
+
+/**
+ * POST /agent/start - Start autonomous agent execution
+ */
+app.post(
+  "/agent/start",
+  originValidationMiddleware,
+  authMiddleware,
+  async (req, res) => {
+    try {
+      // Start async - don't wait for completion
+      agentOrchestrator.start().catch((error) => {
+        console.error("Agent execution error:", error);
+      });
+
+      res.json({ status: "started" });
+    } catch (error) {
+      console.error("Error starting agent:", error);
+      res.status(500).json({ error: (error as Error).message });
+    }
+  },
+);
+
+/**
+ * POST /agent/pause - Pause agent execution
+ */
+app.post(
+  "/agent/pause",
+  originValidationMiddleware,
+  authMiddleware,
+  (req, res) => {
+    try {
+      agentOrchestrator.pause();
+      res.json({ status: "paused" });
+    } catch (error) {
+      console.error("Error pausing agent:", error);
+      res.status(500).json({ error: (error as Error).message });
+    }
+  },
+);
+
+/**
+ * POST /agent/resume - Resume agent execution
+ */
+app.post(
+  "/agent/resume",
+  originValidationMiddleware,
+  authMiddleware,
+  async (req, res) => {
+    try {
+      agentOrchestrator.resume().catch((error) => {
+        console.error("Agent resume error:", error);
+      });
+      res.json({ status: "resumed" });
+    } catch (error) {
+      console.error("Error resuming agent:", error);
+      res.status(500).json({ error: (error as Error).message });
+    }
+  },
+);
+
+/**
+ * POST /agent/stop - Stop agent execution
+ */
+app.post(
+  "/agent/stop",
+  originValidationMiddleware,
+  authMiddleware,
+  (req, res) => {
+    try {
+      agentOrchestrator.stop();
+      res.json({ status: "stopped" });
+    } catch (error) {
+      console.error("Error stopping agent:", error);
+      res.status(500).json({ error: (error as Error).message });
+    }
+  },
+);
+
+/**
+ * GET /agent/status - Get current agent state
+ */
+app.get(
+  "/agent/status",
+  originValidationMiddleware,
+  authMiddleware,
+  (req, res) => {
+    try {
+      const state = agentOrchestrator.getState();
+      res.json(state);
+    } catch (error) {
+      console.error("Error getting agent status:", error);
+      res.status(500).json({ error: (error as Error).message });
+    }
+  },
+);
+
+/**
+ * GET /agent/stream - SSE endpoint for real-time agent events
+ */
+app.get(
+  "/agent/stream",
+  originValidationMiddleware,
+  authMiddleware,
+  (req, res) => {
+    // Set SSE headers
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    // Add this client to the broadcast list
+    agentEventClients.add(res);
+    console.log(
+      `🤖 Agent stream client connected (${agentEventClients.size} total)`,
+    );
+
+    // Send current state as initial data
+    const currentState = agentOrchestrator.getState();
+    res.write(
+      `data: ${JSON.stringify({ type: "state", data: currentState })}\n\n`,
+    );
+
+    // Handle client disconnect
+    req.on("close", () => {
+      agentEventClients.delete(res);
+      console.log(
+        `🤖 Agent stream client disconnected (${agentEventClients.size} remaining)`,
+      );
+    });
+  },
+);
+
+/**
+ * GET /agent/graph - Get the current resource graph for visualization
+ */
+app.get(
+  "/agent/graph",
+  originValidationMiddleware,
+  authMiddleware,
+  (req, res) => {
+    try {
+      const state = agentOrchestrator.getState();
+      res.json(state.resourceGraph);
+    } catch (error) {
+      console.error("Error getting agent graph:", error);
+      res.status(500).json({ error: (error as Error).message });
+    }
+  },
+);
+
 const PORT = parseInt(
   process.env.SERVER_PORT || DEFAULT_MCP_PROXY_LISTEN_PORT,
   10,
