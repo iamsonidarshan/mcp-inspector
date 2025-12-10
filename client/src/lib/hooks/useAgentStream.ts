@@ -7,7 +7,7 @@ import { getMCPProxyAddress } from "../../utils/configUtils";
 import { InspectorConfig } from "../configurationTypes";
 
 export type AgentStatus = "idle" | "running" | "paused" | "completed" | "error";
-export type LLMProvider = "claude" | "gemini";
+export type LLMProvider = "claude" | "gemini" | "openai";
 
 export interface FlaggedTool {
   toolName: string;

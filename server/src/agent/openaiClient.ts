@@ -1,5 +1,5 @@
 /**
- * Google Gemini Client for autonomous agent
+ * OpenAI Client for autonomous agent
  * Implements the ILLMClient interface
  */
 
@@ -14,13 +14,13 @@ import {
 } from "./llmClient.js";
 
 /**
- * Gemini API client implementation
+ * OpenAI API client implementation
  */
-export class GeminiClient implements ILLMClient {
-  readonly provider: LLMProvider = "gemini";
+export class OpenAIClient implements ILLMClient {
+  readonly provider: LLMProvider = "openai";
   private apiKey: string;
-  private baseUrl = "https://generativelanguage.googleapis.com/v1beta";
-  private model = "gemini-2.5-flash";
+  private baseUrl = "https://api.openai.com/v1";
+  private model = "gpt-5-mini";
 
   constructor(apiKey: string) {
     this.apiKey = apiKey;
@@ -37,12 +37,12 @@ export class GeminiClient implements ILLMClient {
     }));
 
     const prompt = PROMPTS.analyzeToolDependencies(toolDescriptions);
-    const response = await this.callGemini(prompt);
+    const response = await this.callOpenAI(prompt);
 
     try {
       return parseJSONResponse<DependencyAnalysis[]>(response);
     } catch {
-      console.error("Failed to parse Gemini response:", response);
+      console.error("Failed to parse OpenAI response:", response);
       return tools.map((t, i) => ({
         tool: t.name,
         requiredParams: t.inputSchema.required || [],
@@ -58,17 +58,17 @@ export class GeminiClient implements ILLMClient {
     availableContext: Record<string, unknown>,
   ): Promise<ExtractedParams> {
     const prompt = PROMPTS.extractParameters(targetTool, availableContext);
-    const response = await this.callGemini(prompt);
+    const response = await this.callOpenAI(prompt);
 
     try {
       const extracted = parseJSONResponse<ExtractedParams>(response);
       console.log(
-        `[Gemini] Extracted params for ${targetTool.name}:`,
+        `[OpenAI] Extracted params for ${targetTool.name}:`,
         extracted.params,
       );
       return extracted;
     } catch {
-      console.error("[Gemini] Failed to parse parameter extraction:", response);
+      console.error("[OpenAI] Failed to parse parameter extraction:", response);
       return {
         params: {},
         sources: {},
@@ -107,16 +107,16 @@ export class GeminiClient implements ILLMClient {
 
     // Debug: log what tools are available vs executed
     console.log(
-      `[Gemini] Executed tools: ${executedTools.length}, Unexecuted tools: ${unexecutedTools.length}`,
+      `[OpenAI] Executed tools: ${executedTools.length}, Unexecuted tools: ${unexecutedTools.length}`,
     );
     console.log(
-      `[Gemini] Unexecuted tool names: ${unexecutedTools
+      `[OpenAI] Unexecuted tool names: ${unexecutedTools
         .map((t) => t.name)
         .slice(0, 10)
         .join(", ")}...`,
     );
 
-    const response = await this.callGemini(prompt);
+    const response = await this.callOpenAI(prompt);
 
     try {
       const parsed = parseJSONResponse<
@@ -124,11 +124,11 @@ export class GeminiClient implements ILLMClient {
         | Array<{ tool: string; reason: string }>
       >(response);
 
-      // Handle case where Gemini returns an array of tools instead of a single object
+      // Handle case where LLM returns an array of tools instead of a single object
       if (Array.isArray(parsed)) {
         if (parsed.length > 0 && parsed[0].tool) {
           console.log(
-            "[Gemini] Got array response, taking first tool:",
+            "[OpenAI] Got array response, taking first tool:",
             parsed[0].tool,
           );
           return { tool: parsed[0].tool, reason: parsed[0].reason };
@@ -139,7 +139,7 @@ export class GeminiClient implements ILLMClient {
       }
 
       // LLM returned null - try fallback logic
-      console.log("[Gemini] LLM returned null, trying fallback...");
+      console.log("[OpenAI] LLM returned null, trying fallback...");
       return this.fallbackToolSelection(unexecutedTools, availableContext);
     } catch {
       // Fallback: pick first tool with no required params
@@ -193,44 +193,43 @@ export class GeminiClient implements ILLMClient {
   }
 
   /**
-   * Call Gemini API
+   * Call OpenAI API
    */
-  private async callGemini(prompt: string): Promise<string> {
-    const url = `${this.baseUrl}/models/${this.model}:generateContent?key=${this.apiKey}`;
+  private async callOpenAI(prompt: string): Promise<string> {
+    const url = `${this.baseUrl}/chat/completions`;
 
     const response = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify({
-        contents: [
+        model: this.model,
+        messages: [
           {
-            parts: [{ text: prompt }],
+            role: "user",
+            content: prompt,
           },
         ],
-        generationConfig: {
-          temperature: 0.1,
-          maxOutputTokens: 8192,
-          responseMimeType: "application/json",
-        },
+        // response_format: { type: "json_object" }, // Optional: nice to have for newer models but prompts ask for JSON anyway
       }),
     });
 
     if (!response.ok) {
       const error = await response.text();
-      throw new Error(`Gemini API error: ${response.status} - ${error}`);
+      throw new Error(`OpenAI API error: ${response.status} - ${error}`);
     }
 
-    interface GeminiResponse {
-      candidates: Array<{
-        content: {
-          parts: Array<{ text: string }>;
+    interface OpenAIResponse {
+      choices: Array<{
+        message: {
+          content: string;
         };
       }>;
     }
 
-    const data = (await response.json()) as GeminiResponse;
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    const data = (await response.json()) as OpenAIResponse;
+    return data.choices?.[0]?.message?.content || "";
   }
 }

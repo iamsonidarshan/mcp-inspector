@@ -12,6 +12,7 @@ import {
 } from "./llmClient.js";
 import { ClaudeClient } from "./claudeClient.js";
 import { GeminiClient } from "./geminiClient.js";
+import { OpenAIClient } from "./openaiClient.js";
 import { ResourceGraph, VisualizationData } from "./resourceGraph.js";
 
 export type AgentStatus = "idle" | "running" | "paused" | "completed" | "error";
@@ -115,6 +116,8 @@ export class AgentOrchestrator extends EventEmitter {
 
     if (provider === "gemini") {
       this.llmClient = new GeminiClient(config.apiKey);
+    } else if (provider === "openai") {
+      this.llmClient = new OpenAIClient(config.apiKey);
     } else {
       this.llmClient = new ClaudeClient(config.apiKey);
     }

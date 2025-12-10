@@ -393,13 +393,27 @@ export default function AgentDashboard({
                   >
                     Claude Sonnet
                   </button>
+                  <button
+                    onClick={() => updateProvider("openai")}
+                    className={`px-3 py-1.5 text-sm rounded-md border transition-colors ${
+                      provider === "openai"
+                        ? "bg-green-100 border-green-500 text-green-700 dark:bg-green-900 dark:text-green-300"
+                        : "border-gray-300 hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-gray-700"
+                    }`}
+                  >
+                    OpenAI
+                  </button>
                 </div>
               </div>
 
               {/* API Key Input */}
               <div>
                 <label className="text-sm font-medium">
-                  {provider === "gemini" ? "Gemini API Key" : "Claude API Key"}
+                  {provider === "gemini"
+                    ? "Gemini API Key"
+                    : provider === "openai"
+                      ? "OpenAI API Key"
+                      : "Claude API Key"}
                 </label>
                 <div className="flex gap-2 mt-1">
                   <div className="relative flex-1">
@@ -408,7 +422,11 @@ export default function AgentDashboard({
                       value={apiKey}
                       onChange={(e) => updateApiKey(e.target.value)}
                       placeholder={
-                        provider === "gemini" ? "AIzaSy..." : "sk-ant-..."
+                        provider === "gemini"
+                          ? "AIzaSy..."
+                          : provider === "openai"
+                            ? "sk-..."
+                            : "sk-ant-..."
                       }
                       className="pr-10"
                     />

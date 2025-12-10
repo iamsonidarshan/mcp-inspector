@@ -5,6 +5,7 @@
 // LLM Clients
 export { ClaudeClient } from "./claudeClient.js";
 export { GeminiClient } from "./geminiClient.js";
+export { OpenAIClient } from "./openaiClient.js";
 export type {
   ILLMClient,
   LLMProvider,
